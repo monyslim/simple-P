@@ -1,0 +1,18 @@
+# name: "Continuous Deploy"
+# on: 
+#     workflow_run: ##This is the event type that triggers the workflow
+#         workflows: ["Deployment Workflow"] ## This is the name of the workflow
+#         types: ## Indicates that the workflow that builds & should be triggered when it is pushed to Docker Hub
+#             - completed ## Specifies workflow is completed
+# jobs: 
+#     pull_and_run_code:
+#         runs-on: self-hosted
+#         steps:
+#             - name: "Remove container starter"
+#               run: "sudo docker rm -f starter || true"
+
+#             - name: "Get the code from Docker Hub"
+#               run: "sudo docker pull monyslim/new-run:1"
+
+#             - name: "Run the image as a container"
+#               run: "sudo docker run -d -p 80:80 --name starter monyslim/automated_runner:1"
