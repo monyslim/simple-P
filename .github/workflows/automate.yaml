@@ -1,18 +1,44 @@
-# name: "Continuous Deploy"
-# on: 
-#     workflow_run: ##This is the event type that triggers the workflow
-#         workflows: ["Deployment Workflow"] ## This is the name of the workflow
-#         types: ## Indicates that the workflow that builds & should be triggered when it is pushed to Docker Hub
-#             - completed ## Specifies workflow is completed
-# jobs: 
-#     pull_and_run_code:
-#         runs-on: self-hosted
-#         steps:
-#             - name: "Remove container starter"
-#               run: "sudo docker rm -f starter || true"
+name: Deploy to Kubernetes
+on: 
+    workflow_run: ##This is the event type that triggers the workflow
+        workflows: ["Deployment Workflow"] ## This is the name of the workflow
+        types: ## Indicates that the workflow that builds & should be triggered when it is pushed to Docker Hub
+            - completed ## Specifies workflow is completed
+jobs: 
+    pull_and_run_code:
+        runs-on: self-hosted
+        steps:
+            - name: Execute custom bash script
+              run: |
+                cluster.sh
+            - name: Install helm
+              run: |
+                curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+                sudo apt-get install apt-transport-https --yes
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+                sudo apt-get update
+                sudo apt-get install helm -y
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            # - name: "Remove container starter"
+            #   run: "sudo docker rm -f starter || true"
 
-#             - name: "Get the code from Docker Hub"
-#               run: "sudo docker pull monyslim/new-run:1"
+            # - name: "Get the code from Docker Hub"
+            #   run: "sudo docker pull monyslim/automated_runner:1"
 
-#             - name: "Run the image as a container"
-#               run: "sudo docker run -d -p 80:80 --name starter monyslim/automated_runner:1"
+            # - name: "Run the image as a container"
+            #   run: "sudo docker run -d -p 80:80 --name starter monyslim/automated_runner:1"
