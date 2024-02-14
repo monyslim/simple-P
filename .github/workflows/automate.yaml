@@ -1,45 +1,129 @@
-name: Deploy to Kubernetes
-on: 
-    workflow_run: ##This is the event type that triggers the workflow
-        workflows: ["Deployment Workflow"] ## This is the name of the workflow
-        types: ## Indicates that the workflow that builds & should be triggered when it is pushed to Docker Hub
-            - completed ## Specifies workflow is completed
-jobs: 
-    pull_and_run_code:
-        runs-on: self-hosted
-        steps:
-            # - name: Execute custom bash script
-            #   run: |
-            #     chmod +x /home/david/simple-P/cluster.sh  # Make the script executable
-            #     /home/david/simple-P/cluster.sh         # Execute the script
-            - name: Install helm
-              run: |
-                curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
-                sudo apt-get install apt-transport-https --yes
-                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
-                sudo apt-get update
-                sudo apt-get install helm -y
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            # - name: "Remove container starter"
-            #   run: "sudo docker rm -f starter || true"
+name: EKS Cluster Deployment
+on:
+  push:
+    branches:
+      - master
 
-            # - name: "Get the code from Docker Hub"
-            #   run: "sudo docker pull monyslim/automated_runner:1"
+jobs:
+  eks-cluster:
+    runs-on: self-hosted
+    steps:
+      - name: Preparation
+        run: echo "Preparing for EKS cluster deployment..."
 
-            # - name: "Run the image as a container"
-            #   run: "sudo docker run -d -p 80:80 --name starter monyslim/automated_runner:1"
+      - name: Update Computer
+        run: |
+          sudo apt-get update
+          sudo apt-get upgrade -y
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Install eksctl
+        run: |
+          ARCH=amd64
+          PLATFORM=$(uname -s)_$ARCH
+
+          curl -sLO "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_$PLATFORM.tar.gz"
+          curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_checksums.txt" | grep $PLATFORM | sha256sum --check
+
+          tar -xzf eksctl_$PLATFORM.tar.gz -C /tmp && rm eksctl_$PLATFORM.tar.gz
+          sudo mv /tmp/eksctl /usr/local/bin
+
+      - name: Create EKS Cluster
+        run: | 
+          eksctl create cluster --name cluster-g \
+          --nodegroup-name cluster-g \
+          --node-type t2.large \
+          --nodes 4 \
+          --nodes-max 4 \
+          --nodes-min 2 \
+          --managed
+
+      - name: Setup Self-Hosted Runner
+        run: |
+          mkdir actions-runner && cd actions-runner
+          curl -o actions-runner-linux-x64-2.313.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.313.0/actions-runner-linux-x64-2.313.0.tar.gz
+          echo "56910d6628b41f99d9a1c5fe9df54981ad5d8c9e42fc14899dcc177e222e71c4  actions-runner-linux-x64-2.313.0.tar.gz" | shasum -a 256 -c
+          tar xzf ./actions-runner-linux-x64-2.313.0.tar.gz
+          ./config.sh --url https://github.com/monyslim/simple-P --token A3KRTZ3SWKOP2ZJOVQVYXXDFZS7QK
+          ./run.sh &
+
+      - name: Setup OIDC
+        run: |
+          cluster_name=cluster-g
+          oidc_id=$(aws eks describe-cluster --name $cluster_name --query "cluster.identity.oidc.issuer" --output text | cut -d '/' -f 5)
+          aws iam list-open-id-connect-providers | grep $oidc_id | cut -d "/" -f4
+          eksctl utils associate-iam-oidc-provider --cluster $cluster_name --approve
+
+      - name: Create a Service Account
+        run: |
+          echo "Creating service account..."
+          cluster_name=cluster-g
+          eksctl create iamserviceaccount \ 
+          --name ebs-csi-controller-sa \
+          --namespace kube-system \
+          --cluster $cluster_name \
+          --role-name AmazonEKS_EBS_CSI_DriverRole \
+          --role-only \
+          --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+          --approve
+
+      - name: Add the EBS-CSI addon
+        run: |
+          cluster_name=cluster-g
+          echo "Adding EBS-CSI addon..."
+          eksctl create addon --name aws-ebs-csi-driver --cluster $cluster_name \
+          --service-account-role-arn arn:aws:iam::372393819917:role/AmazonEKS_EBS_CSI_DriverRole --force
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        env:
+          IMAGE_NAME: rolling-update
+          VERSION: 1
+          USERNAME: monyslim
+        run: |
+          docker build -t $USERNAME/$IMAGE_NAME:$VERSION .
+          docker push $USERNAME/$IMAGE_NAME:$VERSION
+
+      - name: Install kubectl
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-transport-https ca-certificates curl
+          curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+          echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+          sudo apt-get update
+          sudo apt-get install -y kubectl
+
+      - name: Install Helm
+        run: |
+          curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+          sudo apt-get install apt-transport-https --yes
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+          sudo apt-get update
+          sudo apt-get install helm -y
+
+      - name: Install Helm Charts
+        run: |
+          helm create simple-P
+          helm template simple-P simple-P
+          helm install simple-P simple-P
+
+      - name: Install Prometheus
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add stable https://charts.helm.sh/stable
+          helm repo update
+          helm install prometheus prometheus-community/prometheus
