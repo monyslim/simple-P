@@ -6,7 +6,7 @@ on:
 
 jobs:
   eks-cluster:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Preparation
         run: echo "Preparing for EKS cluster deployment..."
